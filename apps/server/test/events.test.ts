@@ -5,7 +5,12 @@ import { expect, onTestFinished, test, vi } from "vitest";
 import type { StoredEvent } from "../src/events.ts";
 import { connectEvents } from "../src/events-wire.ts";
 import type { ApiErrorBody } from "../src/http.ts";
-import { readEvents, startFresh, tempDbPath } from "./support.ts";
+import {
+	readEvents,
+	settledHeapBytes,
+	startFresh,
+	tempDbPath,
+} from "./support.ts";
 
 test("a commit reaches a stream that is already open", async () => {
 	const server = await startFresh(tempDbPath());
@@ -75,6 +80,32 @@ test("stop resolves while a client that never reads holds a large replay", {
 		delay(3000, "still stopping"),
 	]);
 	expect(outcome, "a stalled client does not hold stop open").toBe("stopped");
+});
+
+test("a client that never reads holds the server to a page of memory through a large replay and a burst of commits", {
+	timeout: 60_000,
+}, async () => {
+	const server = await startFresh(tempDbPath());
+	const burst = Array.from({ length: 100_000 }, () => ({
+		type: "server.started" as const,
+	}));
+	server.db.commit(() => ({ value: undefined, events: burst }));
+	const before = settledHeapBytes();
+
+	const socket = connect(Number(server.url.port), "127.0.0.1");
+	onTestFinished(() => {
+		socket.destroy();
+	});
+	socket.write("GET /api/events?after=0 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+	await vi.waitFor(() =>
+		expect(socket.readableLength, "the replay has started").toBeGreaterThan(0),
+	);
+	server.db.commit(() => ({ value: undefined, events: burst }));
+
+	const grown = settledHeapBytes() - before;
+	expect(grown, "a stalled follower holds at most a page").toBeLessThan(
+		8 * 1024 * 1024,
+	);
 });
 
 test("a cursor past the head starts the stream at the head", async () => {

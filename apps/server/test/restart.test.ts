@@ -2,7 +2,7 @@ import { EventSource } from "eventsource";
 import { expect, onTestFinished, test, vi } from "vitest";
 import type { StoredEvent } from "../src/events.ts";
 import { connectEvents, type StreamStatus } from "../src/events-wire.ts";
-import { readEvents, startFresh, tempDbPath } from "./support.ts";
+import { headSeq, readEvents, startFresh, tempDbPath } from "./support.ts";
 
 test("a row written before a restart reads back unchanged after it", async () => {
 	const dbPath = tempDbPath();
@@ -24,6 +24,23 @@ test("a row written before a restart reads back unchanged after it", async () =>
 	);
 	expect(after[1]).toMatchObject({ type: "server.started" });
 	expect(after[1]?.seq).toBeGreaterThan(before[0]?.seq ?? Infinity);
+});
+
+test("a full replay after a restart delivers a backlog of many pages once, in order", async () => {
+	const dbPath = tempDbPath();
+	const first = await startFresh(dbPath);
+	const backlog = Array.from({ length: 600 }, () => ({
+		type: "server.started" as const,
+	}));
+	first.db.commit(() => ({ value: undefined, events: backlog }));
+	await first.stop();
+
+	const second = await startFresh(dbPath);
+	const head = await headSeq(second.url);
+	const replay = await readEvents(second.url, { after: 0, count: head });
+	expect(replay.map((e) => e.seq)).toEqual(
+		Array.from({ length: head }, (_, i) => i + 1),
+	);
 });
 
 test("a client connected across a restart receives what was written while it was away, once", async () => {

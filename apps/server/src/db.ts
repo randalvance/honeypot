@@ -6,7 +6,7 @@ import {
 	drizzle,
 } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import type { Broadcast, Subscription } from "./broadcast.ts";
+import type { Broadcast, ReadLog, Subscription } from "./broadcast.ts";
 import { Seq, type ServerEvent, StoredEvent } from "./events.ts";
 import { events } from "./schema.ts";
 
@@ -34,8 +34,11 @@ export interface Database {
 	/**
 	 * The stored events after `after`, then every later commit, with none missed
 	 * or repeated. Without `after`, or with one past the head, it starts at the head.
+	 * Inside a commit's `write` it throws: there it could capture an uncommitted
+	 * seq, which a rollback lets SQLite reuse.
 	 */
 	follow(after?: Seq): { readonly cursor: Seq; readonly events: Subscription };
+	/** Ends every follow, then closes the file. */
 	close(): void;
 }
 
@@ -50,6 +53,13 @@ export function openDatabase(path: string, broadcast: Broadcast): Database {
 	const db = drizzle({ client: sqlite });
 	migrate(db, { migrationsFolder });
 	let committing = false;
+	const readLog: ReadLog = (after, limit) => {
+		if (committing) {
+			throw new Error("reading the log cannot run inside a commit's write");
+		}
+		if (!sqlite.open) return [];
+		return eventsAfter(db, after, limit);
+	};
 
 	return {
 		read: db,
@@ -72,18 +82,22 @@ export function openDatabase(path: string, broadcast: Broadcast): Database {
 					},
 					{ behavior: "immediate" },
 				);
-				if (stored.length > 0) broadcast.publish(stored);
+				if (stored.length > 0) broadcast.publish();
 				return value;
 			} finally {
 				committing = false;
 			}
 		},
 		follow(after) {
+			if (committing) {
+				throw new Error("follow cannot run inside a commit's write");
+			}
 			const head = headSeq(db);
 			const cursor = after === undefined || after > head ? head : after;
-			return { cursor, events: broadcast.subscribe(eventsAfter(db, cursor)) };
+			return { cursor, events: broadcast.subscribe(cursor, readLog) };
 		},
 		close() {
+			broadcast.close();
 			if (sqlite.open) sqlite.close();
 		},
 	};
@@ -97,12 +111,18 @@ function headSeq(read: Reader): Seq {
 	return Seq.parse(row?.head ?? 0);
 }
 
-export function eventsAfter(read: Reader, after: Seq): StoredEvent[] {
+/** Up to `limit` stored events after `after`, in seq order. To page, pass the last seq back as `after`. */
+export function eventsAfter(
+	read: Reader,
+	after: Seq,
+	limit: number,
+): StoredEvent[] {
 	return read
 		.select()
 		.from(events)
 		.where(gt(events.seq, after))
 		.orderBy(asc(events.seq))
+		.limit(limit)
 		.all()
 		.map(toStoredEvent);
 }
