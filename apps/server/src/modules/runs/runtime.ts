@@ -51,9 +51,16 @@ export function createRuntime(
 		case "claude":
 			return {
 				async run(session, signal) {
-					// Imported on first use, so a process on the stub never loads the SDK.
-					const { createClaudeRuntime } = await import("./claude.ts");
-					return createClaudeRuntime(deps).run(session, signal);
+					try {
+						// Imported on first use, so a process on the stub never loads the SDK.
+						const { createClaudeRuntime } = await import("./claude.ts");
+						return await createClaudeRuntime(deps).run(session, signal);
+					} catch (error) {
+						return {
+							kind: "failed",
+							message: error instanceof Error ? error.message : String(error),
+						};
+					}
 				},
 			};
 		case "stub":

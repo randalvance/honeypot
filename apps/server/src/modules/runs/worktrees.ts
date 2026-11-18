@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { devNull } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import type { MinionSummary } from "../agents/model.ts";
 import type { RepoRef } from "../projects/model.ts";
 import { type RunId, runBranch } from "./model.ts";
@@ -17,8 +18,10 @@ export interface Worktree {
 	/**
 	 * Stages every change and commits it as one commit on the run's branch. A clean tree commits nothing.
 	 * Throws when HEAD is not the run's branch. Resolves with the branch tip, which is the base when the tree was clean.
+	 * Shutdown does not abort it: it is local and fast, and a seal that cannot be cut short keeps the recorded
+	 * state consistent with the branch.
 	 */
-	commitAll(message: string, signal: AbortSignal): Promise<string>;
+	commitAll(message: string): Promise<string>;
 }
 
 export interface Worktrees {
@@ -39,6 +42,9 @@ export function createWorktrees(deps: {
 	readonly dir: string;
 	readonly serverUrl: URL;
 }): Worktrees {
+	// Git resolves a relative path against each subprocess's own directory, so one absolute base keeps
+	// every path meaning one place.
+	const dir = resolve(deps.dir);
 	const serverRoot = deps.serverUrl.href.endsWith("/")
 		? deps.serverUrl
 		: new URL(`${deps.serverUrl.href}/`);
@@ -58,7 +64,7 @@ export function createWorktrees(deps: {
 		return result;
 	};
 	const locate = (runId: RunId) => ({
-		path: join(deps.dir, "worktrees", `run-${runId}`),
+		path: join(dir, "worktrees", `run-${runId}`),
 		branch: runBranch(runId),
 	});
 
@@ -67,9 +73,9 @@ export function createWorktrees(deps: {
 
 		async open(runId, repo, minion, signal) {
 			const { path, branch } = locate(runId);
-			const scratch = join(deps.dir, "scratch", `run-${runId}`);
+			const scratch = join(dir, "scratch", `run-${runId}`);
 			const bare = join(
-				deps.dir,
+				dir,
 				"repos",
 				repo.owner.toLowerCase(),
 				`${repo.name.toLowerCase()}.git`,
@@ -79,7 +85,7 @@ export function createWorktrees(deps: {
 			try {
 				await oneAtATime(bare, async () => {
 					await mkdir(dirname(bare), { recursive: true });
-					await git(deps.dir, ["init", "--quiet", "--bare", bare], { signal });
+					await git(dir, ["init", "--quiet", "--bare", bare], { signal });
 					await git(bare, ["config", "remote.origin.url", url], { signal });
 					await git(bare, ["config", "gc.auto", "0"], { signal });
 					await git(bare, ["config", "maintenance.auto", "false"], { signal });
@@ -92,7 +98,15 @@ export function createWorktrees(deps: {
 							"origin",
 							`+refs/heads/${repo.defaultBranch}:${base}`,
 						],
-						{ signal },
+						// A transfer below 1 KB/s for a minute counts as stalled, so a dead
+						// connection cannot hold the repo's queue open.
+						{
+							signal,
+							config: {
+								"http.lowSpeedLimit": "1000",
+								"http.lowSpeedTime": "60",
+							},
+						},
 					);
 					await mkdir(dirname(path), { recursive: true });
 					await git(
@@ -122,24 +136,29 @@ export function createWorktrees(deps: {
 				branch,
 				scratch,
 				env,
-				async commitAll(message, signal) {
-					const head = await git(
-						path,
-						["rev-parse", "--symbolic-full-name", "HEAD"],
-						{ signal },
-					);
+				async commitAll(message) {
+					const head = await git(path, [
+						"rev-parse",
+						"--symbolic-full-name",
+						"HEAD",
+					]);
 					if (head !== `refs/heads/${branch}`) {
 						throw new Error(`the worktree is on ${head}, not ${branch}`);
 					}
-					const status = await git(path, ["status", "--porcelain"], { signal });
+					const status = await git(path, [
+						"status",
+						"--porcelain",
+						"--untracked-files=all",
+					]);
 					if (status !== "") {
-						await git(path, ["add", "--all"], { signal, env });
-						await git(path, ["commit", "--quiet", "--message", message], {
-							signal,
-							env,
-						});
+						await git(path, ["add", "--all"], { env });
+						await git(
+							path,
+							["commit", "--quiet", "--no-verify", "--message", message],
+							{ env },
+						);
 					}
-					return git(path, ["rev-parse", "HEAD"], { signal });
+					return git(path, ["rev-parse", "HEAD"]);
 				},
 			};
 		},
@@ -153,9 +172,23 @@ function identity(minion: MinionSummary): Record<string, string> {
 		GIT_AUTHOR_EMAIL: email,
 		GIT_COMMITTER_NAME: minion.name,
 		GIT_COMMITTER_EMAIL: email,
-		GIT_CONFIG_COUNT: "1",
-		GIT_CONFIG_KEY_0: "commit.gpgsign",
-		GIT_CONFIG_VALUE_0: "false",
+		...gitConfig({ "commit.gpgsign": "false", "core.hooksPath": devNull }),
+	};
+}
+
+/** `GIT_CONFIG_COUNT`-indexed variables, the one way env can carry config without a file. */
+function gitConfig(
+	pairs: Readonly<Record<string, string>>,
+): Record<string, string> {
+	const entries = Object.entries(pairs);
+	return {
+		GIT_CONFIG_COUNT: String(entries.length),
+		...Object.fromEntries(
+			entries.flatMap(([key, value], index) => [
+				[`GIT_CONFIG_KEY_${index}`, key],
+				[`GIT_CONFIG_VALUE_${index}`, value],
+			]),
+		),
 	};
 }
 
@@ -164,15 +197,19 @@ const pointsGitElsewhere = new Set([
 	"GIT_WORK_TREE",
 	"GIT_INDEX_FILE",
 	"GIT_OBJECT_DIRECTORY",
+	"GIT_COMMON_DIR",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_NAMESPACE",
 ]);
 
 function git(
 	cwd: string,
 	args: readonly string[],
 	options: {
-		readonly signal: AbortSignal;
+		readonly signal?: AbortSignal;
 		readonly env?: Readonly<Record<string, string>>;
-	},
+		readonly config?: Readonly<Record<string, string>>;
+	} = {},
 ): Promise<string> {
 	const env = {
 		...Object.fromEntries(
@@ -182,6 +219,8 @@ function git(
 		),
 		GIT_TERMINAL_PROMPT: "0",
 		GIT_CONFIG_NOSYSTEM: "1",
+		// No hooks on the runtime's own git. The developer's global hooksPath must not run here.
+		...gitConfig({ "core.hooksPath": devNull, ...options.config }),
 		...options.env,
 	};
 	return new Promise((resolve, reject) => {

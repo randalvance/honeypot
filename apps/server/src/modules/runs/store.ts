@@ -109,7 +109,7 @@ export function createRuns(deps: {
 		if (signal.aborted) return undefined;
 		if (end.kind === "failed") return failed("agent_failed", end.message);
 		try {
-			const head = await worktree.commitAll(commitMessage(run), signal);
+			const head = await worktree.commitAll(commitMessage(run));
 			return { kind: "succeeded", head, at: new Date().toISOString() };
 		} catch (error) {
 			return signal.aborted

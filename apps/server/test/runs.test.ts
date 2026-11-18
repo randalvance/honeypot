@@ -451,6 +451,35 @@ function valid(ids: Ids) {
 	return { ...ids, repo: "acme/api", brief: "add a line to the README" };
 }
 
+test("a relative workspace dir resolves against the server's working directory", async () => {
+	const dbPath = tempDbPath();
+	const previous = process.cwd();
+	process.chdir(dirname(dbPath));
+	onTestFinished(() => process.chdir(previous));
+	const github = await gitHub();
+	const server = await startFresh(dbPath, {
+		github: github.config,
+		runtime: { kind: "stub" },
+		workspaceDir: "run-workspace",
+	});
+	const api = hc<AppType>(server.url.href).api;
+	const ids = await setUp(api);
+	const run = await startRun(
+		api,
+		valid({
+			projectId: ids.project.id,
+			minionId: ids.minion.id,
+		}),
+	);
+	const ended = await settled(api, run.id);
+	expect(ended.state.kind, "the run survives a relative workspace dir").toBe(
+		"succeeded",
+	);
+	expect(run.worktree.startsWith("/"), "the API reports an absolute path").toBe(
+		true,
+	);
+});
+
 test("reading a run that does not exist is not_found", async () => {
 	const { api } = await serve();
 	const response = await api.runs[":runId"].$get({
