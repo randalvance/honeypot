@@ -1,6 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { EventSource } from "eventsource";
 import { onTestFinished, vi } from "vitest";
 import { Seq, type StoredEvent } from "../src/events.ts";
@@ -63,6 +65,15 @@ export async function errorOf(
 	response: Response,
 ): Promise<ApiErrorBody["error"]> {
 	return ((await response.json()) as ApiErrorBody).error;
+}
+
+/** Heap bytes after two forced GC passes, so transient garbage does not count. */
+export function settledHeapBytes(): number {
+	setFlagsFromString("--expose-gc");
+	const gc = runInNewContext("gc") as () => void;
+	gc();
+	gc();
+	return process.memoryUsage().heapUsed;
 }
 
 export async function headSeq(url: URL): Promise<number> {
