@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { GitHubConfig } from "../src/modules/projects/github.ts";
+import { seedRepo } from "./git.ts";
 
+/** A readable repo also clones from a local bare repo with one commit, unless it is `unclonable`. */
 export type StubRepo =
-	| { readonly defaultBranch: string }
+	| { readonly defaultBranch: string; readonly unclonable?: true }
 	| {
 			readonly answer:
 				| "sso_forbidden"
@@ -24,6 +30,20 @@ export async function startGitHubStub(
 	repos: Record<string, StubRepo>,
 ): Promise<GitHubStub> {
 	const token = randomUUID();
+	const gitRoot = await mkdtemp(join(tmpdir(), "honeypot-git-"));
+	await Promise.all(
+		Object.entries(repos).flatMap(([fullName, repo]) =>
+			"defaultBranch" in repo && !repo.unclonable
+				? [
+						seedRepo(
+							join(gitRoot, `${fullName}.git`),
+							fullName,
+							repo.defaultBranch,
+						),
+					]
+				: [],
+		),
+	);
 	const byLowerName = new Map(
 		Object.entries(repos).map(([fullName, repo]) => [
 			fullName.toLowerCase(),
@@ -90,12 +110,17 @@ export async function startGitHubStub(
 	await once(server, "listening");
 	const { port } = server.address() as AddressInfo;
 	return {
-		config: { apiUrl: new URL(`http://127.0.0.1:${port}/`), token },
+		config: {
+			apiUrl: new URL(`http://127.0.0.1:${port}/`),
+			serverUrl: pathToFileURL(`${gitRoot}/`),
+			token,
+		},
 		requests,
 		async close() {
 			server.closeAllConnections();
 			server.close();
 			await once(server, "close");
+			await rm(gitRoot, { recursive: true, force: true });
 		},
 	};
 }

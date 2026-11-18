@@ -24,6 +24,14 @@ const storedRows: { [Type in ServerEventType]: [unknown, ...unknown[]] } = {
 			at: "2026-11-08T02:15:27.904Z",
 		},
 	],
+	"run.changed": [
+		{
+			type: "run.changed",
+			runId: "8e3f1a2b-7c4d-4e5f-9a6b-1c2d3e4f5a6b",
+			seq: 5,
+			at: "2026-11-18T09:41:12.207Z",
+		},
+	],
 };
 
 test("every event row ever stored still parses with today's schema", () => {

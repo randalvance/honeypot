@@ -18,12 +18,15 @@ import type { SkillsLibrary } from "./modules/agents/skills.ts";
 import type { Agents } from "./modules/agents/store.ts";
 import { projectsRoute } from "./modules/projects/routes.ts";
 import type { Projects } from "./modules/projects/store.ts";
+import { runsRoute } from "./modules/runs/routes.ts";
+import type { Runs } from "./modules/runs/store.ts";
 
 export function createApp(
 	db: Database,
 	projects: Projects,
 	agents: Agents,
 	library: SkillsLibrary,
+	runs: Runs,
 ) {
 	const app = new Hono().basePath("/api");
 	app.notFound((c) => c.json(notFound("route"), errorStatus.not_found));
@@ -39,7 +42,8 @@ export function createApp(
 		.route("/projects", projectsRoute(projects))
 		.route("/companion", companionRoute(agents))
 		.route("/minions", minionsRoute(agents))
-		.route("/skills", skillsRoute(library));
+		.route("/skills", skillsRoute(library))
+		.route("/runs", runsRoute(runs));
 }
 
 type ErrorResponses = {

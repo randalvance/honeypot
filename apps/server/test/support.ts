@@ -9,6 +9,7 @@ import { Seq, type StoredEvent } from "../src/events.ts";
 import { connectEvents } from "../src/events-wire.ts";
 import type { ApiErrorBody } from "../src/http.ts";
 import type { GitHubConfig } from "../src/modules/projects/github.ts";
+import type { RuntimeConfig } from "../src/modules/runs/runtime.ts";
 
 export function tempDbPath(): string {
 	const dir = mkdtempSync(join(tmpdir(), "honeypot-test-"));
@@ -18,6 +19,7 @@ export function tempDbPath(): string {
 
 const noGitHub: GitHubConfig = {
 	apiUrl: new URL("http://127.0.0.1:9/"),
+	serverUrl: new URL("http://127.0.0.1:9/"),
 	token: "unused",
 };
 
@@ -27,11 +29,26 @@ export async function startFresh(
 		port = 0,
 		github = noGitHub,
 		skillsDir = join(dirname(dbPath), "skills"),
-	}: { port?: number; github?: GitHubConfig; skillsDir?: string } = {},
+		workspaceDir = join(dirname(dbPath), "workspace"),
+		runtime = { kind: "stub" },
+	}: {
+		port?: number;
+		github?: GitHubConfig;
+		skillsDir?: string;
+		workspaceDir?: string;
+		runtime?: RuntimeConfig;
+	} = {},
 ) {
 	vi.resetModules();
 	const { start } = await import("../src/server.ts");
-	const server = await start({ port, dbPath, skillsDir, github });
+	const server = await start({
+		port,
+		dbPath,
+		skillsDir,
+		workspaceDir,
+		github,
+		runtime,
+	});
 	onTestFinished(() => server.stop());
 	return server;
 }

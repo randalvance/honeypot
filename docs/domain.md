@@ -21,8 +21,10 @@ This page defines the words Honeypot uses and the data shape behind each one. Co
 | Step | One step in a workflow. One minion staffs it. |
 | Outcome | The label a minion reports when it finishes a step, such as `approved` or `changes_requested`. The outcome selects the next transition. |
 | Transition | An allowed move from one step to the next step, or to the end of the run, for one outcome. |
-| Run | One execution of a workflow for one task. |
-| Handoff | A recorded transition inside a run. It carries the artifacts from one minion to the next. |
+| Run | One execution of work in a project repo, in its own git worktree and branch. Until workflows arrive, a run is one minion working one brief. The workflows epic makes a run execute a workflow for one task. |
+| Brief | The instructions a minion receives for one run, such as "add a line to the README". |
+| Runtime adapter | The part of Honeypot that runs a minion's agent for one run. The Claude Agent SDK is the first one. The tests use a stub that appends the brief to the README. |
+| Handoff | A recorded transition inside a run. It carries the artifacts from one minion to the next. Handoffs arrive with workflows. |
 | Board | The kanban view of tasks. It can sync with a GitHub Projects board. |
 | Factory view | The live view of runs. It shows each minion at work and each handoff to the next step. |
 
@@ -140,10 +142,24 @@ interface Task {
 	issue?: { repo: RepoRef; number: number };
 }
 
+type RunFailure = "workspace_failed" | "agent_failed" | "interrupted";
+
 type RunState =
-	| { kind: "running"; step: StepId }
-	| { kind: "succeeded" }
-	| { kind: "failed"; step: StepId; reason: string };
+	| { kind: "running" }
+	| { kind: "succeeded"; head: string; at: string }
+	| { kind: "failed"; reason: RunFailure; message: string; at: string };
+
+interface Run {
+	id: RunId;
+	projectId: ProjectId;
+	repo: RepoRef;
+	minion: Pick<Minion, "id" | "name">;
+	brief: string;
+	branch: string;
+	worktree: string;
+	state: RunState;
+	startedAt: string;
+}
 
 interface Handoff {
 	from: StepId;
@@ -152,16 +168,9 @@ interface Handoff {
 	at: string;
 	artifacts: ArtifactId[];
 }
-
-interface Run {
-	id: RunId;
-	taskId: TaskId;
-	playbookId: PlaybookId;
-	workflowId: WorkflowId;
-	state: RunState;
-	handoffs: Handoff[];
-}
 ```
+
+A run copies its repo and its minion's name when it starts, so it reads the same after the minion is renamed or deleted. Its branch is `honeypot/run-<id>`. `head` is the branch's tip after Honeypot's commit. `workspace_failed` means Honeypot could not clone, add the worktree, or commit. `agent_failed` means the minion's agent ended with an error. `interrupted` means the server stopped during the run. When workflows arrive, a run gains `taskId`, `playbookId`, `workflowId`, the current `step`, and its `handoffs`.
 
 A file artifact has a name, a media type, and a size instead of a path, because its bytes live in the database next to its row.
 
@@ -178,3 +187,7 @@ A `SkillRef` is the name of a folder directly under the skills library. `mcpServ
 - A playbook has a brief for every step in its workflow.
 - A run is at one step at a time. A run moves only along a transition that its workflow defines.
 - Each run works in its own git worktree and branch. Two runs never share a checkout.
+- A run starts `running` and ends `succeeded` or `failed` once. An ended run never changes.
+- A run that is `running` when the server stops ends `failed` with the reason `interrupted` when the server starts again.
+- When the minion's agent finishes, Honeypot commits whatever the minion left uncommitted, as one commit on the run's branch. A failed run commits nothing, and its worktree keeps the changes.
+- A run never pushes, and it never changes the repo's default branch.
