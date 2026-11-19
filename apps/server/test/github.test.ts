@@ -66,6 +66,7 @@ test("with no token or no reachable GitHub, nothing reaches the network and the 
 
 	const refused = createGitHub({
 		apiUrl: new URL("http://127.0.0.1:9/"),
+		serverUrl: new URL("http://127.0.0.1:9/"),
 		token: "unused",
 	});
 	expect((await errorOf(refused.resolve(names("acme/api")))).code).toBe(

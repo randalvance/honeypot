@@ -97,6 +97,7 @@ export const staleAfter: {
 		agentKeys.minions.list,
 		agentKeys.minions.detail(event.minionId),
 	],
+	"run.changed": () => [],
 };
 
 function staleFor(event: StoredEvent): QueryKey[] {

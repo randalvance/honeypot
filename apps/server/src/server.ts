@@ -11,6 +11,8 @@ import { createSkillsLibrary } from "./modules/agents/skills.ts";
 import { createAgents } from "./modules/agents/store.ts";
 import { createGitHub, type GitHubConfig } from "./modules/projects/github.ts";
 import { createProjects } from "./modules/projects/store.ts";
+import type { RuntimeConfig } from "./modules/runs/runtime.ts";
+import { createRuns } from "./modules/runs/store.ts";
 
 export interface Config {
 	/** Port on 127.0.0.1. 0 asks the OS for a free one. */
@@ -18,27 +20,40 @@ export interface Config {
 	readonly dbPath: string;
 	/** The skills library folder. `start` creates it. */
 	readonly skillsDir: string;
+	/** Where runs keep Honeypot's clones, their worktrees, and their scratch folders. `start` creates it. */
+	readonly workspaceDir: string;
 	readonly github: GitHubConfig;
+	readonly runtime: RuntimeConfig;
 }
 
 export interface RunningServer {
 	readonly url: URL;
 	readonly db: Database;
-	/** Ends open streams, waits up to a second for them to flush, closes every connection, then the database. Every call returns the first call's promise. */
+	/** Ends open streams, waits up to a second for them to flush, closes every connection, stops every live run, then closes the database. Every call returns the first call's promise. */
 	stop(): Promise<void>;
 }
 
-/** Listens on loopback only, then commits `server.started`. A failed start writes nothing and leaves nothing open. */
+/** Listens on loopback only, commits `server.started`, then fails the runs that a previous process left running. A failed start writes nothing and leaves nothing open. */
 export async function start(config: Config): Promise<RunningServer> {
 	mkdirSync(dirname(config.dbPath), { recursive: true });
 	mkdirSync(config.skillsDir, { recursive: true });
+	mkdirSync(config.workspaceDir, { recursive: true });
 	const broadcast = createBroadcast();
 	const db = openDatabase(config.dbPath, broadcast);
 	const projects = createProjects({ db, github: createGitHub(config.github) });
 	const library = createSkillsLibrary(config.skillsDir);
 	const agents = createAgents({ db, library });
+	const runs = createRuns({
+		db,
+		projects,
+		agents,
+		workspaceDir: config.workspaceDir,
+		serverUrl: config.github.serverUrl,
+		skillsDir: config.skillsDir,
+		runtime: config.runtime,
+	});
 	const handle = getRequestListener(
-		createApp(db, projects, agents, library).fetch,
+		createApp(db, projects, agents, library, runs).fetch,
 	);
 	const responses = new Set<ServerResponse>();
 	const http = createServer((req, res) => {
@@ -53,6 +68,7 @@ export async function start(config: Config): Promise<RunningServer> {
 			value: undefined,
 			events: [{ type: "server.started" }],
 		}));
+		runs.recover();
 	} catch (error) {
 		http.close();
 		db.close();
@@ -75,6 +91,7 @@ export async function start(config: Config): Promise<RunningServer> {
 		// An ended SSE response still leaves its keep-alive socket holding close() open.
 		http.closeAllConnections();
 		await closed;
+		await runs.close();
 		db.close();
 	};
 	return {

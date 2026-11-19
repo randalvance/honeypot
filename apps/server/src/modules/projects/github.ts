@@ -6,6 +6,8 @@ import { type RepoName, type RepoRef, repoName } from "./model.ts";
 
 export interface GitHubConfig {
 	readonly apiUrl: URL;
+	/** Where repos clone from, as `<serverUrl>/<owner>/<name>.git`. */
+	readonly serverUrl: URL;
 	readonly token: string | undefined;
 }
 

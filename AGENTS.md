@@ -13,6 +13,7 @@ Honeypot is an agentic software factory. Work arrives as GitHub issues labeled `
 - The container keeps its own `node_modules` and pnpm store in Docker volumes, so the host's `node_modules` stays untouched. After a lockfile change, run `scripts/devcontainer.sh pnpm install`.
 - pnpm refuses package versions published less than 7 days ago (`minimumReleaseAge`). When an install refuses the latest version, pick the newest version that is old enough.
 - Tests and browser tests answer GitHub from `apps/server/test/github-stub.ts`. Only `pnpm dev` talks to the real GitHub API, with `GITHUB_TOKEN` or the `gh` login.
+- Tests and browser tests run minions with the stub runtime and clone from the local bare repos that the GitHub stub seeds. Only `pnpm dev` runs the Claude Agent SDK, with `ANTHROPIC_API_KEY`.
 
 ## Server rules
 

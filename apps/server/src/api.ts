@@ -28,3 +28,10 @@ export type {
 	ProjectSummary,
 	RepoRef,
 } from "./modules/projects/model.ts";
+export type {
+	NewRun,
+	Run,
+	RunFailure,
+	RunId,
+	RunState,
+} from "./modules/runs/model.ts";

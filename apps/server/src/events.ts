@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MinionId } from "./modules/agents/model.ts";
 import { ProjectId } from "./modules/projects/model.ts";
+import { RunId } from "./modules/runs/model.ts";
 
 /** A position in the event log. It only grows and is never reused, so a client can hold it across restarts. */
 export const Seq = z.number().int().nonnegative().brand<"Seq">();
@@ -11,6 +12,7 @@ export const ServerEvent = z.discriminatedUnion("type", [
 	z.object({ type: z.literal("project.changed"), projectId: ProjectId }),
 	z.object({ type: z.literal("companion.changed") }),
 	z.object({ type: z.literal("minion.changed"), minionId: MinionId }),
+	z.object({ type: z.literal("run.changed"), runId: RunId }),
 ]);
 export type ServerEvent = z.infer<typeof ServerEvent>;
 export type ServerEventType = ServerEvent["type"];

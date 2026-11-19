@@ -19,11 +19,13 @@ scripts/devcontainer.sh pnpm dev
 
 `pnpm dev` starts the server on `http://127.0.0.1:4317` and the web app on `http://127.0.0.1:5173`, both inside the container. The web app sends `/api` requests to the server. The development database is `apps/server/.data/honeypot.db`. Set `HONEYPOT_DB_PATH` to use a different file. Agent profiles pick skills from the skills library, a `skills` folder next to the database that holds one Agent Skills folder per skill. Set `HONEYPOT_SKILLS_DIR` to use a different folder. The server checks each project repo against GitHub with `GITHUB_TOKEN`, or with `gh auth token` when that is unset. Set `GITHUB_API_URL` for GitHub Enterprise.
 
+A run clones its project repo into a `workspace` folder next to the database and works in its own git worktree and branch there. Set `HONEYPOT_WORKSPACE_DIR` to use a different folder. Repos clone from `https://github.com`. Set `GITHUB_SERVER_URL` for GitHub Enterprise. Minions run through the Claude Agent SDK, which needs `ANTHROPIC_API_KEY`, and the dev container passes it in from your shell. Set `HONEYPOT_RUNTIME=stub` to run minions with the stub the tests use, which appends the brief to the repo's README. [ADR 0003](docs/adr/0003-agent-runtime.md) says how runs work.
+
 | Command | What it runs |
 | --- | --- |
 | `pnpm lint` | Biome lint and format check |
 | `pnpm typecheck` | `tsc` for the root and both apps |
-| `pnpm test` | Vitest server tests, including the restart test |
+| `pnpm test` | Vitest server tests, including the restart test. The run tests need `git` |
 | `pnpm db:check` | Fails if a schema change has no migration |
 | `pnpm smoke` | The Playwright browser tests. Playwright runs Vite on port 5273, and each test starts its own server on port 4417 with a fresh database and a local GitHub stub |
 

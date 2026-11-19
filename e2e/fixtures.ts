@@ -13,6 +13,8 @@ import { e2ePorts } from "./ports.ts";
 
 interface Honeypot {
 	readonly github: GitHubStub;
+	/** The stub runtime's gate folder. Each run holds after its edit until a test deletes its file there. */
+	readonly gateDir: string;
 	readonly pid: number;
 	restart(): Promise<void>;
 }
@@ -34,17 +36,23 @@ export const test = base.extend<{ honeypot: Honeypot }>({
 						join(skillsDir, "tdd", "SKILL.md"),
 						"---\nname: tdd\ndescription: Use when writing code test-first.\n---\n",
 					);
+					const gateDir = join(dataDir, "gate");
+					mkdirSync(gateDir);
 					const env = {
 						...process.env,
 						HONEYPOT_PORT: String(e2ePorts.server),
 						HONEYPOT_DB_PATH: join(dataDir, "honeypot.db"),
 						HONEYPOT_SKILLS_DIR: skillsDir,
+						HONEYPOT_RUNTIME: "stub",
+						HONEYPOT_STUB_GATE_DIR: gateDir,
 						GITHUB_API_URL: github.config.apiUrl.href,
+						GITHUB_SERVER_URL: github.config.serverUrl.href,
 						GITHUB_TOKEN: github.config.token,
 					};
 					let server = await startServer(env);
 					await use({
 						github,
+						gateDir,
 						get pid() {
 							return pidOf(server);
 						},
