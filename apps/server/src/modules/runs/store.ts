@@ -112,9 +112,8 @@ export function createRuns(deps: {
 			const head = await worktree.commitAll(commitMessage(run));
 			return { kind: "succeeded", head, at: new Date().toISOString() };
 		} catch (error) {
-			return signal.aborted
-				? undefined
-				: failed("workspace_failed", describe(error));
+			// Sealing is not abortable, so a throw here is a real failure even mid-shutdown.
+			return failed("workspace_failed", describe(error));
 		}
 	};
 

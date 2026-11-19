@@ -145,13 +145,15 @@ export function createWorktrees(deps: {
 					if (head !== `refs/heads/${branch}`) {
 						throw new Error(`the worktree is on ${head}, not ${branch}`);
 					}
+					// Stage first: an edit the agent staged and then reverted in the tree
+					// still shows in status, and committing it would fail as empty.
+					await git(path, ["add", "--all"], { env });
 					const status = await git(path, [
 						"status",
 						"--porcelain",
 						"--untracked-files=all",
 					]);
 					if (status !== "") {
-						await git(path, ["add", "--all"], { env });
 						await git(
 							path,
 							["commit", "--quiet", "--no-verify", "--message", message],
@@ -176,11 +178,15 @@ function identity(minion: MinionSummary): Record<string, string> {
 	};
 }
 
-/** `GIT_CONFIG_COUNT`-indexed variables, the one way env can carry config without a file. */
+/**
+ * `GIT_CONFIG_COUNT`-indexed variables, the one way env can carry config without a file.
+ * Pairs the server inherited (an operator's URL-scoped http.extraHeader, say) come first,
+ * so `pairs` wins where both name one key: in git, the later value does.
+ */
 function gitConfig(
 	pairs: Readonly<Record<string, string>>,
 ): Record<string, string> {
-	const entries = Object.entries(pairs);
+	const entries = [...inheritedConfig(), ...Object.entries(pairs)];
 	return {
 		GIT_CONFIG_COUNT: String(entries.length),
 		...Object.fromEntries(
@@ -190,6 +196,17 @@ function gitConfig(
 			]),
 		),
 	};
+}
+
+function inheritedConfig(): [string, string][] {
+	const count = Number(process.env.GIT_CONFIG_COUNT ?? "0");
+	const pairs: [string, string][] = [];
+	for (let index = 0; index < (Number.isFinite(count) ? count : 0); index++) {
+		const key = process.env[`GIT_CONFIG_KEY_${index}`];
+		const value = process.env[`GIT_CONFIG_VALUE_${index}`];
+		if (key !== undefined && value !== undefined) pairs.push([key, value]);
+	}
+	return pairs;
 }
 
 const pointsGitElsewhere = new Set([

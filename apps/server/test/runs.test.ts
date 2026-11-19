@@ -475,8 +475,8 @@ test("a relative workspace dir resolves against the server's working directory",
 	expect(ended.state.kind, "the run survives a relative workspace dir").toBe(
 		"succeeded",
 	);
-	expect(run.worktree.startsWith("/"), "the API reports an absolute path").toBe(
-		true,
+	expect(run.worktree, "the path resolves under the configured dir").toBe(
+		join(process.cwd(), "run-workspace", "worktrees", `run-${run.id}`),
 	);
 });
 
